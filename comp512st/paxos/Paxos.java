@@ -261,10 +261,9 @@ public class Paxos implements GCDeliverListener {
 			logger.fine("Received PROMISE from " + sender + " for seq=" + msg.sequence +
 					" (count=" + instance.promiseCount + "/" + MAJORITY + ")");
 
-			if (msg.isPrevAccepted()) {
+			if (msg.acceptedValue != null) {
 				// Track highest accepted value
-				if (instance.highestAccepted == null ||
-						msg.acceptedProposal.compareTo(instance.highestAccepted) > 0) {
+				if (instance.highestAccepted == null || msg.acceptedProposal.compareTo(instance.highestAccepted) > 0) {
 					instance.highestAccepted = msg.acceptedProposal;
 					instance.highestAcceptedValue = msg.acceptedValue;
 					logger.fine("Updating highest accepted value for seq=" + msg.sequence +

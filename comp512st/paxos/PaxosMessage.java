@@ -32,7 +32,6 @@ class PromiseMessage extends PaxosMessage {
     final ProposedSeq proposalNumber;
     final ProposedSeq acceptedProposal;
     final Object acceptedValue;
-    boolean prev_accepted;
 
     PromiseMessage(int sequence, ProposedSeq proposalNumber,
                    ProposedSeq acceptedProposal, Object acceptedValue) {
@@ -41,24 +40,14 @@ class PromiseMessage extends PaxosMessage {
         this.acceptedProposal = acceptedProposal;
         this.acceptedValue = acceptedValue;
 
-        if (this.acceptedProposal != null) {
-            this.prev_accepted = true;
-        } else {
-            this.prev_accepted = false;
-        }
-    }
-
-    boolean isPrevAccepted() {
-        return prev_accepted;
     }
 
     @Override
     public String toString() {
         return "PromiseMessage{seq=" + sequence +
                 ", proposal=" + proposalNumber +
-                ", prevAccepted=" + prev_accepted +
-                (prev_accepted ? ", acceptedProposal=" + acceptedProposal +
-                        ", acceptedValue=" + acceptedValue : "") +
+                ", prevAccepted=" +", acceptedProposal=" + acceptedProposal +
+                        ", acceptedValue=" + acceptedValue +
                 "}";
     }
 }
