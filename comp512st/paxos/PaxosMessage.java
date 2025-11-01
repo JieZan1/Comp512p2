@@ -8,7 +8,6 @@ abstract class PaxosMessage implements Serializable {
     PaxosMessage(int sequence) {
         this.sequence = sequence;
     }
-
     @Override
     public String toString() {
         return this.getClass().getSimpleName() + "{seq=" + sequence + "}";

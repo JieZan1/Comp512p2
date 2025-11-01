@@ -16,6 +16,7 @@ public class Paxos implements GCDeliverListener {
 	private Logger logger;
 	private String myProcess;
 	private String[] allGroupProcesses;
+	private String[] allOtherProcesses;
 
 	final int MAJORITY ;
 
@@ -54,6 +55,9 @@ public class Paxos implements GCDeliverListener {
 		this.logger = logger;
 		this.myProcess = myProcess;
 		this.allGroupProcesses = allGroupProcesses;
+		this.allOtherProcesses = Arrays.stream(allGroupProcesses)
+				.filter(p -> !p.equals(myProcess))
+				.toArray(String[]::new);
 
 		this.MAJORITY = (allGroupProcesses.length / 2) + 1;
 
@@ -183,7 +187,7 @@ public class Paxos implements GCDeliverListener {
 			PrepareMessage prepare = new PrepareMessage(seq, pn);
 
 			logger.fine("Sending PREPARE for seq=" + seq + " with proposal=" + pn);
-			gcl.broadcastMsg(prepare);
+			gcl.multicastMsg(prepare, this.allOtherProcesses);
 
 			failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 		}
@@ -304,7 +308,7 @@ public class Paxos implements GCDeliverListener {
 					instance.proposedValue = valueToPropose;
 
 					logger.fine("Sending ACCEPT for seq=" + msg.sequence + " value=" + valueToPropose);
-					gcl.broadcastMsg(accept);
+					gcl.multicastMsg(accept, this.allOtherProcesses);
 				} else {
 					logger.warning("No value to propose for seq=" + msg.sequence + " despite reaching majority!");
 				}
@@ -369,7 +373,7 @@ public class Paxos implements GCDeliverListener {
 				ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
 
 				logger.fine("Sending CONFIRM to " + sender + " for seq=" + msg.sequence);
-				gcl.broadcastMsg(confirm);
+				gcl.multicastMsg(confirm, this.allOtherProcesses);
 
 				// Move to next sequence
 				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
