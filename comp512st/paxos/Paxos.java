@@ -108,7 +108,7 @@ public class Paxos implements GCDeliverListener {
 	// Application calls this to get next message in order
 	public Object acceptTOMsg() throws InterruptedException {
 		Object result = null;
-		while (!deliveryQueue.isEmpty()) {
+		while (true) {
 			LabelObj val = (LabelObj) deliveryQueue.take();
 			if (received_label_obj.contains(val)) {
 				continue;
@@ -119,7 +119,6 @@ public class Paxos implements GCDeliverListener {
 			break;
 		}
 		return result;
-
 	}
 
 
