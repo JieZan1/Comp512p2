@@ -26,4 +26,13 @@ class ProposedSeq implements Serializable, Comparable<ProposedSeq> {
         return processId + ":" + number;
     }
 
+    @Override
+    public boolean equals(Object other) {
+        if (other instanceof ProposedSeq) {
+            ProposedSeq otherSeq = (ProposedSeq) other;
+            return this.number == otherSeq.number && this.processId.equals(otherSeq.processId);
+        }
+        return false;
+    }
+
 }
