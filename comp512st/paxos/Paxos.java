@@ -141,6 +141,7 @@ public class Paxos implements GCDeliverListener {
 	//Override to handel
 	@Override
 	public void deliver(String sender, Object msg) {
+		logger.fine("Delivering message " + msg);
 		if (isShutdown)
 			return;
 		try {

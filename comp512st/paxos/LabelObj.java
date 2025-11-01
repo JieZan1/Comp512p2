@@ -34,4 +34,9 @@ public class LabelObj implements Serializable {
     public int hashCode() {
         return originProcess.hashCode() + local_seq;
     }
+
+    @Override
+    public String toString() {
+        return originProcess + ":" + local_seq;
+    }
 }

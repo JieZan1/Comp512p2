@@ -21,4 +21,9 @@ class ProposedSeq implements Serializable, Comparable<ProposedSeq> {
         return this.processId.compareTo(other.processId);
     }
 
+    @Override
+    public String toString() {
+        return processId + ":" + number;
+    }
+
 }
