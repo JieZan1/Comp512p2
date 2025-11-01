@@ -235,21 +235,27 @@ public class Paxos implements GCDeliverListener {
 	private void handlePromise(String sender, PromiseMessage msg) {
 		PaxosInstance instance = instances.get(msg.sequence);
 
-		//shouldn't happen...
-		if (instance == null){
+		// shouldn't happen...
+		if (instance == null) {
+			logger.fine("Received PROMISE from " + sender + " for unknown seq=" + msg.sequence);
 			return;
 		}
 
 		synchronized (instance) {
-			if (instance.decided){
+			if (instance.decided) {
+				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence + " (already decided)");
 				return;
 			}
 
 			if (!msg.proposalNumber.equals(instance.myProposal)) {
+				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence +
+						" (proposal mismatch: got " + msg.proposalNumber + ", expected " + instance.myProposal + ")");
 				return;
 			}
 
 			instance.promiseCount++;
+			logger.fine("Received PROMISE from " + sender + " for seq=" + msg.sequence +
+					" (count=" + instance.promiseCount + "/" + MAJORITY + ")");
 
 			if (msg.isPrevAccepted()) {
 				// Track highest accepted value
@@ -257,23 +263,34 @@ public class Paxos implements GCDeliverListener {
 						msg.acceptedProposal.compareTo(instance.highestAccepted) > 0) {
 					instance.highestAccepted = msg.acceptedProposal;
 					instance.highestAcceptedValue = msg.acceptedValue;
+					logger.fine("Updating highest accepted value for seq=" + msg.sequence +
+							": proposal=" + msg.acceptedProposal + ", value=" + msg.acceptedValue);
+				} else {
+					logger.fine("Ignoring previously accepted value from " + sender +
+							" (proposal " + msg.acceptedProposal + " <= current highest " + instance.highestAccepted + ")");
 				}
 			}
 
 			// once received promise from the majority
 			if (instance.promiseCount >= MAJORITY) {
+				logger.fine("Reached majority promises for seq=" + msg.sequence + " (count=" + instance.promiseCount + ")");
+
 				failCheck.checkFailure(FailCheck.FailureType.AFTERBECOMINGLEADER);
 
 				// Phase 2a
 				Object valueToPropose = null;
-				// adopt to the previously accpeted value with highest ballot ID
+				// adopt to the previously accepted value with highest ballot ID
 				if (instance.highestAcceptedValue != null) {
 					valueToPropose = instance.highestAcceptedValue;
+					logger.fine("Adopting highest accepted value for seq=" + msg.sequence + ": " + valueToPropose);
 				} else {
 					// Use original proposed value
 					PendingValue pv = pendingValues.get(msg.sequence);
-					if (pv!= null){
+					if (pv != null) {
 						valueToPropose = pv.value;
+						logger.fine("Using original proposed value for seq=" + msg.sequence + ": " + valueToPropose);
+					} else {
+						logger.fine("No pending value found for seq=" + msg.sequence);
 					}
 				}
 
@@ -288,6 +305,8 @@ public class Paxos implements GCDeliverListener {
 
 					logger.fine("Sending ACCEPT for seq=" + msg.sequence + " value=" + valueToPropose);
 					gcl.broadcastMsg(accept);
+				} else {
+					logger.warning("No value to propose for seq=" + msg.sequence + " despite reaching majority!");
 				}
 			}
 		}
