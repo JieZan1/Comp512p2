@@ -462,6 +462,8 @@ public class Paxos implements GCDeliverListener {
 				return;
 			}
 
+			logger.fine("Decided on Confirm message from " + sender + " for seq=" + msg.sequence);
+
 			instance.decided = true;
 
 			deliverValue(msg.sequence, instance.acceptor.acceptedValue);
