@@ -42,6 +42,8 @@ public class Paxos implements GCDeliverListener {
 
 	private  Set<LabelObj> received_label_obj = Collections.synchronizedSet(new HashSet<>());
 
+	private final Object deliveryLock = new Object();
+
 	private volatile boolean isShutdown = false;
 
 	// Thread for retrying failed proposals
@@ -59,7 +61,7 @@ public class Paxos implements GCDeliverListener {
 				.filter(p -> !p.equals(myProcess))
 				.toArray(String[]::new);
 
-		this.MAJORITY = (allGroupProcesses.length / 2) + 1;
+		this.MAJORITY = (allGroupProcesses.length / 2);
 
 		// Initialize GCL with this as the delivery listener
 		Logger dummyLogger = Logger.getLogger("dummy");
@@ -389,23 +391,28 @@ public class Paxos implements GCDeliverListener {
 		}
 	}
 
-	private void deliverValue(int seq, Object value) {
-		if (deliverBuffer.contains(seq)) {
+	private synchronized void deliverValue(int seq, Object value) {
+		// Use putIfAbsent to avoid race condition
+		if (deliverBuffer.putIfAbsent(seq, value) != null) {
+			// Value already exists for this sequence
 			return;
 		}
 
-		deliverBuffer.put(seq, value);
-
+		// Synchronize on deliveredSequence to ensure only one thread delivers at a time
 		try {
-
 			while (deliverBuffer.containsKey(deliveredSeqence.get())) {
-				deliveryQueue.put(deliverBuffer.get(deliveredSeqence.get()));
-				deliveredSeqence.set(deliveredSeqence.get() + 1);
+				Object val = deliverBuffer.remove(deliveredSeqence.get());
+				if (val != null) {
+					deliveryQueue.put(val);
+					deliveredSeqence.incrementAndGet();
+				}
 			}
 			logger.fine("Delivered value for seq=" + seq);
 		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt(); // Restore interrupt status
 			logger.log(Level.WARNING, "Interrupted while delivering value", e);
 		}
+
 	}
 
 	private void markAccepted(PendingValue pv) {
