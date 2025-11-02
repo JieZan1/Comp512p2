@@ -300,7 +300,7 @@ public class Paxos implements GCDeliverListener {
 							msg.proposalNumber,
 							valueToPropose);
 
-					instance.acceptCount = 0;
+					instance.acceptCount = 1;
 					instance.proposedValue = valueToPropose;
 
 					logger.fine("Sending ACCEPT for seq=" + msg.sequence + " value=" + valueToPropose);
