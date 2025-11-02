@@ -123,6 +123,13 @@ public class Paxos implements GCDeliverListener {
 			retryThread.interrupt();
 		}
 
+		try {
+			logger.info("wait 2 secs before shut down Paxos");
+			Thread.sleep(2000); // 2000 ms = 2 seconds
+		} catch (InterruptedException e) {
+			logger.info("Interrupted while waiting for shut down Paxos");
+		}
+
 		// Wake up any waiting threads
 		for (PendingValue pv : pendingValues.values()) {
 			synchronized (pv) {
