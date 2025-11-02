@@ -99,3 +99,37 @@ class ConfirmMessage extends PaxosMessage {
                 ", proposal=" + proposalNumber + "}";
     }
 }
+
+class RejectPromiseMessage extends PaxosMessage {
+    final ProposedSeq proposalNumber;
+
+    public RejectPromiseMessage(int sequence, ProposedSeq proposalNumber) {
+        super(sequence);
+        this.proposalNumber = proposalNumber;
+
+    }
+
+    @Override
+    public String toString() {
+        return "RejectPromiseMessage{seq=" + sequence +
+                ", proposal=" + proposalNumber +
+                "}";
+    }
+}
+
+class RejectAcceptMessage extends PaxosMessage {
+    final ProposedSeq proposalNumber;
+
+    public RejectAcceptMessage(int sequence, ProposedSeq proposalNumber) {
+        super(sequence);
+        this.proposalNumber = proposalNumber;
+
+    }
+
+    @Override
+    public String toString() {
+        return "RejectAcceptMessage{seq=" + sequence +
+                ", proposal=" + proposalNumber +
+                "}";
+    }
+}

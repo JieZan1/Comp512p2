@@ -208,7 +208,14 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (instance.decided) {
-				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence + " (already decided)");
+				Object valueToPropose = instance.acceptor.acceptedValue;
+
+				AcceptMessage accept = new AcceptMessage(
+						msg.sequence,
+						msg.proposalNumber,
+						valueToPropose
+				);
+				gcl.multicastMsg(accept, this.allOtherProcesses);
 				return;
 			}
 
@@ -273,6 +280,15 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (instance.decided) {
+				if (msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
+					logger.info("Resending CONFIRM to " + sender + " for seq=" + msg.sequence +
+							" (already decided)");
+					ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
+					gcl.sendMsg(confirm, sender);
+				} else {
+					logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence +
+							" (already decided with different proposal)");
+				}
 				return;
 			}
 
@@ -291,10 +307,11 @@ public class Paxos implements GCDeliverListener {
 						" value=" + instance.proposer.proposedValue);
 
 				// Mark pending value as accepted
-				PendingValue pv = pendingValues.get(msg.sequence);
+				PendingValue pv = instance.proposer.myPendingValue;  // Get from proposer state
 				if (pv != null && pv.value.equals(instance.proposer.proposedValue)) {
 					markAccepted(pv);
-					pendingValues.remove(msg.sequence);
+					// Remove from pendingValues by finding the PendingValue object
+					pendingValues.entrySet().removeIf(entry -> entry.getValue() == pv);
 				}
 
 				deliverValue(msg.sequence, instance.proposer.proposedValue);
@@ -304,6 +321,24 @@ public class Paxos implements GCDeliverListener {
 
 				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
 			}
+		}
+	}
+
+	private void handleRejectPromise(String sender, RejectPromiseMessage msg){
+		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
+		if (instance.isProposer()) {
+			logger.info("Detected higher proposal " + msg.proposalNumber +
+					" for seq=" + msg.sequence + ". Abandoning my proposal.");
+			instance.abandonProposal();
+		}
+	}
+
+	private void handleRejectAccept(String sender, RejectAcceptMessage msg ){
+		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
+		if (instance.isProposer()) {
+			logger.info("Detected higher proposal " + msg.proposalNumber +
+					" for seq=" + msg.sequence + ". Abandoning my proposal.");
+			instance.abandonProposal();
 		}
 	}
 
@@ -320,6 +355,19 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			// Check if we're the proposer and this proposal supersedes ours
+
+			if (instance.decided) {
+				logger.info("Sending PROMISE with decided value to " + sender + " for seq=" + msg.sequence);
+				PromiseMessage promise = new PromiseMessage(
+						msg.sequence,
+						msg.proposalNumber,
+						instance.acceptor.acceptedProposal,
+						instance.acceptor.acceptedValue
+				);
+				gcl.sendMsg(promise, sender);
+				return;
+			}
+
 			if (instance.isProposer() &&
 					msg.proposalNumber.compareTo(instance.proposer.myProposal) > 0) {
 
@@ -335,8 +383,8 @@ public class Paxos implements GCDeliverListener {
 				PromiseMessage promise = new PromiseMessage(
 						msg.sequence,
 						msg.proposalNumber,
-						instance.acceptor.acceptedProposal,
-						instance.acceptor.acceptedValue
+						instance.acceptor.acceptedProposal, //ProposedSeq acceptedProposal = new ProposedSeq(-1, "");
+						instance.acceptor.acceptedValue  //Object acceptedValue = null;
 				);
 
 				logger.fine("Sending PROMISE to " + sender + " for seq=" + msg.sequence);
@@ -344,6 +392,8 @@ public class Paxos implements GCDeliverListener {
 
 				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			} else {
+				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, instance.acceptor.promisedProposal);
+				gcl.sendMsg(reject, sender);
 				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
 		}
@@ -351,10 +401,7 @@ public class Paxos implements GCDeliverListener {
 
 
 	private void handleAccept(String sender, AcceptMessage msg) {
-		if (!instances.containsKey(msg.sequence)) {
-			instances.put(msg.sequence, new PaxosInstance(msg.sequence));
-		}
-		PaxosInstance instance = instances.get(msg.sequence);
+		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
 
 		synchronized (instance) {
 			// Check if we're the proposer and this accept supersedes ours
@@ -363,6 +410,19 @@ public class Paxos implements GCDeliverListener {
 
 				logger.info("Detected higher accept proposal for seq=" + msg.sequence);
 				instance.abandonProposal();
+			}
+
+			if (instance.decided) {
+				if (msg.value.equals(instance.acceptor.acceptedValue)) {
+					logger.info("Sending ACCEPTED for already decided value to " + sender +
+							" for seq=" + msg.sequence);
+					AcceptedMessage accepted = new AcceptedMessage(msg.sequence, msg.proposalNumber);
+					gcl.sendMsg(accepted, sender);
+				} else {
+					logger.fine("Ignoring ACCEPT from " + sender + " for seq=" + msg.sequence +
+							" (already decided with different value)");
+				}
+				return;
 			}
 
 			if (msg.proposalNumber.compareTo(instance.acceptor.promisedProposal) >= 0) {
@@ -374,6 +434,11 @@ public class Paxos implements GCDeliverListener {
 
 				logger.fine("Sending ACCEPTED to " + sender + " for seq=" + msg.sequence);
 				gcl.sendMsg(accepted, sender);
+			}
+			else {
+				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, msg.proposalNumber);
+				gcl.sendMsg(reject, sender);
+				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
 		}
 	}
@@ -388,6 +453,11 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (!msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
+				logger.fine("Received Stale confirm from " + sender + " for seq=" + msg.sequence);
+				return;
+			}
+
+			if (instance.decided) {
 				logger.fine("Received Stale confirm from " + sender + " for seq=" + msg.sequence);
 				return;
 			}
@@ -415,6 +485,10 @@ public class Paxos implements GCDeliverListener {
 			handleAccepted(sender, (AcceptedMessage) msg);
 		} else if (msg instanceof ConfirmMessage){
 			handleConfirm(sender, (ConfirmMessage) msg);
+		} else if (msg instanceof RejectPromiseMessage) {
+			handleRejectPromise(sender, (RejectPromiseMessage) msg);
+		} else if (msg instanceof RejectAcceptMessage) {
+			handleRejectAccept(sender, (RejectAcceptMessage) msg);
 		}
 	}
 
@@ -559,4 +633,6 @@ public class Paxos implements GCDeliverListener {
 			this.value = value;
 		}
 	}
+
+
 }
