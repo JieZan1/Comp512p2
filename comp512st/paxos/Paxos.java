@@ -403,14 +403,19 @@ public class Paxos implements GCDeliverListener {
 
 	private void handlePaxosMessage(String sender, PaxosMessage msg) {
 		if (msg instanceof PrepareMessage) {
+			logger.fine("Received PREPARE from " + sender + " for seq=" + ((PrepareMessage) msg).sequence);
 			handlePrepare(sender, (PrepareMessage) msg);
 		} else if (msg instanceof PromiseMessage) {
+			logger.fine("Received PROMISE from " + sender + " for seq=" + ((PromiseMessage) msg).sequence);
 			handlePromise(sender, (PromiseMessage) msg);
 		} else if (msg instanceof AcceptMessage) {
+			logger.fine("Received ACCEPT from " + sender + " for seq=" + ((AcceptMessage) msg).sequence);
 			handleAccept(sender, (AcceptMessage) msg);
 		} else if (msg instanceof AcceptedMessage) {
+			logger.fine("Received ACCEPTED from " + sender + " for seq=" + ((AcceptedMessage) msg).sequence);
 			handleAccepted(sender, (AcceptedMessage) msg);
-		} else if (msg instanceof ConfirmMessage){
+		} else if (msg instanceof ConfirmMessage) {
+			logger.fine("Received CONFIRM from " + sender + " for seq=" + ((ConfirmMessage) msg).sequence);
 			handleConfirm(sender, (ConfirmMessage) msg);
 		}
 	}
