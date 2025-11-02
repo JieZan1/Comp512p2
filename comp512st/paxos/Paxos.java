@@ -25,6 +25,8 @@ public class Paxos implements GCDeliverListener {
 
 	private AtomicInteger localSeqence = new AtomicInteger(1);
 
+	private AtomicInteger deliveredSeqence = new AtomicInteger(1);
+
 	// Queue for delivering messages to application in order
 	private LinkedBlockingQueue<Object> deliveryQueue = new LinkedBlockingQueue<>();
 
@@ -35,7 +37,8 @@ public class Paxos implements GCDeliverListener {
 	private ConcurrentHashMap<Integer, PaxosInstance> instances = new ConcurrentHashMap<>();
 
 	// For tracking which values have been delivered
-	private Set<Integer> deliveredSequences = Collections.synchronizedSet(new HashSet<>());
+
+	private ConcurrentHashMap<Integer, Object> deliverBuffer = new ConcurrentHashMap<>();
 
 	private  Set<LabelObj> received_label_obj = Collections.synchronizedSet(new HashSet<>());
 
@@ -392,14 +395,18 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	private void deliverValue(int seq, Object value) {
-		if (deliveredSequences.contains(seq)) {
+		if (deliverBuffer.contains(seq)) {
 			return;
 		}
 
-		deliveredSequences.add(seq);
+		deliverBuffer.put(seq, value);
 
 		try {
-			deliveryQueue.put(value);
+
+			while (deliverBuffer.containsKey(deliveredSeqence.get())) {
+				deliveryQueue.put(deliverBuffer.get(deliveredSeqence.get()));
+				deliveredSeqence.set(deliveredSeqence.get() + 1);
+			}
 			logger.fine("Delivered value for seq=" + seq);
 		} catch (InterruptedException e) {
 			logger.log(Level.WARNING, "Interrupted while delivering value", e);
