@@ -4,6 +4,7 @@ import comp512.gcl.*;
 import comp512.utils.*;
 
 import java.io.*;
+import java.lang.classfile.Label;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -108,7 +109,7 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	public Object acceptTOMsg() throws InterruptedException {
-		Object result = null;
+		LabelObj result = null;
 		while (true) {
 			LabelObj val = (LabelObj) deliveryQueue.take();
 			if (received_label_obj.contains(val)) {
@@ -116,10 +117,12 @@ public class Paxos implements GCDeliverListener {
 			}
 			received_label_obj.add(val);
 
-			result = val.val;
+			result = val;
 			break;
 		}
-		return result;
+		logger.fine("Accepted " + result.toString() + "****");
+
+		return result.val;
 	}
 
 
