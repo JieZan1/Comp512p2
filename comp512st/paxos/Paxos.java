@@ -453,7 +453,7 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (!msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
-				logger.fine("Received Stale confirm from " + sender + " for seq=" + msg.sequence);
+				logger.fine("Received Wrong confirm from " + sender + " for seq=" + msg.sequence + "||" + msg.proposalNumber + " vs. " + instance.acceptor.acceptedProposal);
 				return;
 			}
 
