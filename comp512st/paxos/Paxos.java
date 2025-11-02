@@ -582,33 +582,83 @@ public class Paxos implements GCDeliverListener {
 
 	private void retryPendingValues() {
 		int currentTimeout = this.retry_timeout;
-		final int MAX_TIMEOUT = 100000000; // Maximum 5 seconds
+		final int MAX_TIMEOUT = 100000000;
 		final double BACKOFF_MULTIPLIER = 1.2;
-		final double JITTER_FACTOR = 0.3; // ±30% randomness
+		final double JITTER_FACTOR = 0.3;
 		Random random = new Random();
 
 		while (!isShutdown) {
 			try {
-				// Add random jitter to the timeout
 				double jitter = 1.0 + (random.nextDouble() * 2 - 1) * JITTER_FACTOR;
 				int jitteredTimeout = (int) (currentTimeout * jitter);
 
 				Thread.sleep(jitteredTimeout);
 
-				// Check for pending values that need retry
 				boolean foundPendingValue = false;
-				for (Map.Entry<Integer, PendingValue> entry : pendingValues.entrySet()) {
+
+				// Create snapshot to avoid concurrent modification
+				List<Map.Entry<Integer, PendingValue>> snapshot =
+						new ArrayList<>(pendingValues.entrySet());
+
+				// First, check for explicitly rejected values
+				Map.Entry<Integer, PendingValue> targetEntry = null;
+
+				for (Map.Entry<Integer, PendingValue> entry : snapshot) {
 					int seq = entry.getKey();
 					PendingValue pv = entry.getValue();
 
-					if ( (pv.rejected) || (!pv.accepted )){ //&& seq < currentSequence.get())) {
+					synchronized (pv) {
+						if (pv.rejected && !pv.accepted) {
+							targetEntry = entry;
+							logger.info("Found rejected value at seq=" + seq);
+							break;
+						}
+					}
+				}
+
+				// If no rejected values, find the oldest pending value
+				if (targetEntry == null) {
+					long oldestTime = Long.MAX_VALUE;
+					for (Map.Entry<Integer, PendingValue> entry : snapshot) {
+						PendingValue pv = entry.getValue();
+						synchronized (pv) {
+							if (!pv.accepted && pv.proposeTime < oldestTime) {
+								oldestTime = pv.proposeTime;
+								targetEntry = entry;
+							}
+						}
+					}
+				}
+
+				// If we found a pending value to retry
+				if (targetEntry != null) {
+					int oldSeq = targetEntry.getKey();
+					PendingValue pv = targetEntry.getValue();
+
+					boolean shouldRetry = false;
+					synchronized (pv) {
+						// Double-check it still needs retry
+						if (!pv.accepted) {
+							shouldRetry = true;
+							pv.rejected = false;
+							pv.proposeTime = System.currentTimeMillis();
+						}
+					}
+
+					if (shouldRetry) {
 						foundPendingValue = true;
-						pv.rejected = false;
-						pendingValues.remove(seq);
-						if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
-						int newSeq = retrySequenceNumber.getAndIncrement();
-						pendingValues.put(newSeq, pv);
-						proposeValue(newSeq, pv.value, pv);
+
+						// Find a sequence number by looking for gaps in instance keys
+						int targetSeq = findAvailableSequence();
+
+						// Atomically move the pending value
+						pendingValues.put(targetSeq, pv);  // Add first
+						pendingValues.remove(oldSeq);       // Remove second
+
+						logger.info("Retrying pending value from seq=" + oldSeq +
+								" to seq=" + targetSeq);
+
+						proposeValue(targetSeq, pv.value, pv);
 					}
 				}
 
@@ -617,7 +667,6 @@ public class Paxos implements GCDeliverListener {
 					currentTimeout = Math.min((int)(currentTimeout * BACKOFF_MULTIPLIER), MAX_TIMEOUT);
 					logger.fine("Increased retry timeout to " + currentTimeout + "ms");
 				} else {
-					// Reset to base timeout if nothing to retry
 					currentTimeout = this.retry_timeout;
 				}
 
@@ -626,8 +675,40 @@ public class Paxos implements GCDeliverListener {
 					logger.log(Level.WARNING, "Retry thread interrupted", e);
 				}
 				break;
+			} catch (Exception e) {
+				logger.log(Level.WARNING, "Error in retry thread", e);
 			}
 		}
+	}
+
+	/**
+	 * Find an available sequence number by looking for gaps in instance keys.
+	 * If no gap found, return highest key + 1.
+	 */
+	private int findAvailableSequence() {
+		if (instances.isEmpty()) {
+			return 1;
+		}
+
+		// Get all instance keys and sort them
+		List<Integer> keys = new ArrayList<>(instances.keySet());
+		Collections.sort(keys);
+
+		// Look for gaps in the sequence
+		int expectedSeq = keys.get(0);
+		for (int key : keys) {
+			if (key > expectedSeq) {
+				// Found a gap
+				logger.info("Found gap at sequence " + expectedSeq);
+				return expectedSeq;
+			}
+			expectedSeq = key + 1;
+		}
+
+		// No gap found, return highest + 1
+		int nextSeq = keys.get(keys.size() - 1) + 1;
+		logger.info("No gap found, using sequence " + nextSeq);
+		return nextSeq;
 	}
 
 	// Helper classes
@@ -635,9 +716,11 @@ public class Paxos implements GCDeliverListener {
 		final Object value;
 		volatile boolean accepted = false;
 		volatile boolean rejected = false;
+		volatile long proposeTime; // Track when this value was proposed
 
 		PendingValue(Object value) {
 			this.value = value;
+			this.proposeTime = System.currentTimeMillis();
 		}
 	}
 
