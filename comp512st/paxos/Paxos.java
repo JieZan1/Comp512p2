@@ -56,7 +56,7 @@ public class Paxos implements GCDeliverListener {
 		this.myProcess = myProcess;
 		this.allGroupProcesses = allGroupProcesses;
 		this.allOtherProcesses = Arrays.stream(allGroupProcesses)
-				.filter(p -> true)         //!p.equals(myProcess))
+				.filter(p -> !p.equals(myProcess))
 				.toArray(String[]::new);
 
 		this.MAJORITY = (allGroupProcesses.length / 2) + 1;
