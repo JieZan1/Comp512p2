@@ -53,7 +53,7 @@ public class Paxos implements GCDeliverListener {
 		this.myProcess = myProcess;
 		this.allGroupProcesses = allGroupProcesses;
 		this.allOtherProcesses = Arrays.stream(allGroupProcesses)
-				.filter(p -> !p.equals(myProcess))
+				.filter(p -> true)         //!p.equals(myProcess))
 				.toArray(String[]::new);
 
 		this.MAJORITY = (allGroupProcesses.length / 2) + 1;
@@ -176,7 +176,7 @@ public class Paxos implements GCDeliverListener {
 
 			ProposedSeq ps = new ProposedSeq(instance.proposalNumber, myProcess);
 			instance.myProposal = ps;
-			instance.promiseCount = 1;
+			instance.promiseCount = 0;
 			instance.highestAccepted = null;
 
 			PrepareMessage prepare = new PrepareMessage(seq, ps);
@@ -296,7 +296,7 @@ public class Paxos implements GCDeliverListener {
 							msg.proposalNumber,
 							valueToPropose);
 
-					instance.acceptCount = 1;
+					instance.acceptCount = 0;
 					instance.proposedValue = valueToPropose;
 
 					logger.fine("Sending ACCEPT for seq=" + msg.sequence + " value=" + valueToPropose);
