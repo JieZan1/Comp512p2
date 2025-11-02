@@ -175,9 +175,10 @@ public class Paxos implements GCDeliverListener {
 				if (val.equals(instance.acceptor.acceptedValue)) {
 					markAccepted(pv);
 				} else {
-					int nextSeq = currentSequence.incrementAndGet();
-					pendingValues.put(nextSeq, pv);
-					proposeValue(nextSeq, val, pv);
+					int targetSeq = findAvailableSequence();
+					pv.rejected = false;
+					pv.proposeTime = System.currentTimeMillis();
+					proposeValue(targetSeq, val, pv);
 				}
 				return;
 			}
@@ -320,7 +321,6 @@ public class Paxos implements GCDeliverListener {
 				gcl.multicastMsg(confirm, this.allOtherProcesses);
 
 				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
-				if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
 			}
 		}
 	}
@@ -470,7 +470,6 @@ public class Paxos implements GCDeliverListener {
 			deliverValue(msg.sequence, instance.acceptor.acceptedValue);
 
 			currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
-			if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
 		}
 	}
 
