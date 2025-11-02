@@ -311,8 +311,6 @@ public class Paxos implements GCDeliverListener {
 				PendingValue pv = instance.proposer.myPendingValue;  // Get from proposer state
 				if (pv != null && pv.value.equals(instance.proposer.proposedValue)) {
 					markAccepted(pv);
-					// Remove from pendingValues by finding the PendingValue object
-					pendingValues.entrySet().removeIf(entry -> entry.getValue() == pv);
 				}
 
 				deliverValue(msg.sequence, instance.proposer.proposedValue);
