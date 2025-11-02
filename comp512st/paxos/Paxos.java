@@ -59,7 +59,10 @@ public class Paxos implements GCDeliverListener {
 		this.MAJORITY = (allGroupProcesses.length / 2) + 1;
 
 		// Initialize GCL with this as the delivery listener
-		this.gcl = new GCL(myProcess, allGroupProcesses, this, logger);
+		Logger dummyLogger = Logger.getLogger("dummy");
+		dummyLogger.setLevel(Level.OFF);
+
+		this.gcl = new GCL(myProcess, allGroupProcesses, this, dummyLogger);
 
 		// Start retry thread for failed proposals
 		retryThread = new Thread(this::retryPendingValues);
