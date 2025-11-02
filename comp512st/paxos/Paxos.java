@@ -27,6 +27,8 @@ public class Paxos implements GCDeliverListener {
 
 	private AtomicInteger deliveredSeqence = new AtomicInteger(1);
 
+	private AtomicInteger retrySequenceNumber = new AtomicInteger(1);
+
 	// Queue for delivering messages to application in order
 	private LinkedBlockingQueue<Object> deliveryQueue = new LinkedBlockingQueue<>();
 
@@ -320,6 +322,7 @@ public class Paxos implements GCDeliverListener {
 				gcl.multicastMsg(confirm, this.allOtherProcesses);
 
 				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
+				if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
 			}
 		}
 	}
@@ -469,6 +472,7 @@ public class Paxos implements GCDeliverListener {
 			deliverValue(msg.sequence, instance.acceptor.acceptedValue);
 
 			currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
+			if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
 		}
 	}
 
@@ -597,11 +601,12 @@ public class Paxos implements GCDeliverListener {
 					int seq = entry.getKey();
 					PendingValue pv = entry.getValue();
 
-					if ( (pv.rejected) || (!pv.accepted && seq < currentSequence.get())) {
+					if ( (pv.rejected) || (!pv.accepted )){ //&& seq < currentSequence.get())) {
 						foundPendingValue = true;
 						pv.rejected = false;
 						pendingValues.remove(seq);
-						int newSeq = currentSequence.getAndIncrement();
+						if (retrySequenceNumber.get() <= currentSequence.get()){ retrySequenceNumber.set(currentSequence.get() + 1); }
+						int newSeq = retrySequenceNumber.getAndIncrement();
 						pendingValues.put(newSeq, pv);
 						proposeValue(newSeq, pv.value, pv);
 					}
