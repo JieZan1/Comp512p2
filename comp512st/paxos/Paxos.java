@@ -156,6 +156,12 @@ public class Paxos implements GCDeliverListener {
 		}
 	}
 
+
+
+	//------------------------------
+  	//         Proposer Logic
+	//----------------------------
+
 	private void proposeValue(int seq, Object val, PendingValue pv) {
 		if (!instances.containsKey(seq)) {
 			instances.put(seq, new PaxosInstance(seq));
@@ -164,11 +170,9 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (instance.decided) {
-				// if the current sequence is already decided, move to the next sequence
-				if (val.equals(instance.acceptedValue)) {
+				if (val.equals(instance.acceptor.acceptedValue)) {
 					markAccepted(pv);
 				} else {
-					// Try next sequence
 					int nextSeq = currentSequence.incrementAndGet();
 					pendingValues.put(nextSeq, pv);
 					proposeValue(nextSeq, val, pv);
@@ -177,13 +181,11 @@ public class Paxos implements GCDeliverListener {
 			}
 
 			// Phase 1a
-			instance.proposalNumber = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
-			instance.proposedValue = val;
+			int proposalNumber = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
+			ProposedSeq ps = new ProposedSeq(proposalNumber, myProcess);
 
-			ProposedSeq ps = new ProposedSeq(instance.proposalNumber, myProcess);
-			instance.myProposal = ps;
-			instance.promiseCount = 0;
-			instance.highestAccepted = null;
+			// Initialize as proposer
+			instance.initializeAsProposer(ps, val, pv);
 
 			PrepareMessage prepare = new PrepareMessage(seq, ps);
 
@@ -193,6 +195,211 @@ public class Paxos implements GCDeliverListener {
 			failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 		}
 	}
+
+	private void handlePromise(String sender, PromiseMessage msg) {
+		PaxosInstance instance = instances.get(msg.sequence);
+
+		if (instance == null || !instance.isProposer()) {
+			logger.fine("Received PROMISE but not proposing for seq=" + msg.sequence);
+			return;
+		}
+
+		synchronized (instance) {
+			if (instance.decided) {
+				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence + " (already decided)");
+				return;
+			}
+
+			if (msg.proposalNumber.compareTo(instance.proposer.myProposal) < 0) {
+				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence +
+						" (lower ballot id)");
+				return;
+			}
+
+			instance.proposer.promiseCount++;
+			logger.fine("Received PROMISE from " + sender + " for seq=" + msg.sequence +
+					" (count=" + instance.proposer.promiseCount + "/" + MAJORITY + ")");
+
+			if (msg.acceptedValue != null) {
+				if (instance.proposer.highestAccepted == null ||
+						msg.acceptedProposal.compareTo(instance.proposer.highestAccepted) > 0) {
+
+					instance.proposer.highestAccepted = msg.acceptedProposal;
+					instance.proposer.highestAcceptedValue = msg.acceptedValue;
+					logger.fine("Updating highest accepted value for seq=" + msg.sequence);
+				}
+			}
+
+			// Once received promise from the majority
+			if (instance.proposer.promiseCount >= MAJORITY) {
+				logger.fine("Reached majority promises for seq=" + msg.sequence);
+
+				failCheck.checkFailure(FailCheck.FailureType.AFTERBECOMINGLEADER);
+
+				// Phase 2a - adopt highest accepted value or use our own
+				Object valueToPropose = instance.proposer.highestAcceptedValue != null
+						? instance.proposer.highestAcceptedValue
+						: instance.proposer.proposedValue;
+
+				if (valueToPropose != null) {
+					AcceptMessage accept = new AcceptMessage(
+							msg.sequence,
+							msg.proposalNumber,
+							valueToPropose
+					);
+
+					instance.proposer.acceptCount = 0;
+					instance.proposer.proposedValue = valueToPropose;
+					// As an acceptor, accept our own proposal
+					instance.acceptor.promisedProposal = msg.proposalNumber;
+					instance.acceptor.acceptedProposal = msg.proposalNumber;
+					instance.acceptor.acceptedValue = valueToPropose;
+
+					logger.fine("Sending ACCEPT for seq=" + msg.sequence);
+					gcl.multicastMsg(accept, this.allOtherProcesses);
+				}
+			}
+		}
+	}
+
+	private void handleAccepted(String sender, AcceptedMessage msg) {
+		PaxosInstance instance = instances.get(msg.sequence);
+
+		if (instance == null || !instance.isProposer()) {
+			return;
+		}
+
+		synchronized (instance) {
+			if (instance.decided) {
+				return;
+			}
+
+			if (!msg.proposalNumber.equals(instance.proposer.myProposal)) {
+				return;
+			}
+
+			instance.proposer.acceptCount++;
+
+			if (instance.proposer.acceptCount >= MAJORITY && !instance.decided) {
+				instance.decided = true;
+
+				failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
+
+				logger.info("Consensus reached for seq=" + msg.sequence +
+						" value=" + instance.proposer.proposedValue);
+
+				// Mark pending value as accepted
+				PendingValue pv = pendingValues.get(msg.sequence);
+				if (pv != null && pv.value.equals(instance.proposer.proposedValue)) {
+					markAccepted(pv);
+					pendingValues.remove(msg.sequence);
+				}
+
+				deliverValue(msg.sequence, instance.proposer.proposedValue);
+
+				ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
+				gcl.multicastMsg(confirm, this.allOtherProcesses);
+
+				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
+			}
+		}
+	}
+
+
+	//------------------------------
+	//         Acceptor Logic
+	//----------------------------
+
+
+	private void handlePrepare(String sender, PrepareMessage msg) {
+		failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE);
+
+		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
+
+		synchronized (instance) {
+			// Check if we're the proposer and this proposal supersedes ours
+			if (instance.isProposer() &&
+					msg.proposalNumber.compareTo(instance.proposer.myProposal) > 0) {
+
+				logger.info("Detected higher proposal " + msg.proposalNumber +
+						" for seq=" + msg.sequence + ". Abandoning my proposal.");
+				instance.abandonProposal();
+			}
+
+			// As an acceptor, promise to the higher proposal
+			if (msg.proposalNumber.compareTo(instance.acceptor.promisedProposal) > 0) {
+				instance.acceptor.promisedProposal = msg.proposalNumber;
+
+				PromiseMessage promise = new PromiseMessage(
+						msg.sequence,
+						msg.proposalNumber,
+						instance.acceptor.acceptedProposal,
+						instance.acceptor.acceptedValue
+				);
+
+				logger.fine("Sending PROMISE to " + sender + " for seq=" + msg.sequence);
+				gcl.sendMsg(promise, sender);
+
+				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
+			} else {
+				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
+			}
+		}
+	}
+
+
+	private void handleAccept(String sender, AcceptMessage msg) {
+		if (!instances.containsKey(msg.sequence)) {
+			instances.put(msg.sequence, new PaxosInstance(msg.sequence));
+		}
+		PaxosInstance instance = instances.get(msg.sequence);
+
+		synchronized (instance) {
+			// Check if we're the proposer and this accept supersedes ours
+			if (instance.isProposer() &&
+					msg.proposalNumber.compareTo(instance.proposer.myProposal) > 0) {
+
+				logger.info("Detected higher accept proposal for seq=" + msg.sequence);
+				instance.abandonProposal();
+			}
+
+			if (msg.proposalNumber.compareTo(instance.acceptor.promisedProposal) >= 0) {
+				instance.acceptor.promisedProposal = msg.proposalNumber;
+				instance.acceptor.acceptedProposal = msg.proposalNumber;
+				instance.acceptor.acceptedValue = msg.value;
+
+				AcceptedMessage accepted = new AcceptedMessage(msg.sequence, msg.proposalNumber);
+
+				logger.fine("Sending ACCEPTED to " + sender + " for seq=" + msg.sequence);
+				gcl.sendMsg(accepted, sender);
+			}
+		}
+	}
+
+
+
+	private void handleConfirm(String sender, ConfirmMessage msg) {
+		PaxosInstance instance = instances.get(msg.sequence);
+		if (instance == null) {
+			return;
+		}
+
+		synchronized (instance) {
+			if (!msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
+				return;
+			}
+
+			instance.decided = true;
+
+			deliverValue(msg.sequence, instance.acceptor.acceptedValue);
+
+			currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
+		}
+	}
+
+	//------------------------
+ 	//        Deliver / retry
+ 	//------------------------
 
 	private void handlePaxosMessage(String sender, PaxosMessage msg) {
 		if (msg instanceof PrepareMessage) {
@@ -205,189 +412,6 @@ public class Paxos implements GCDeliverListener {
 			handleAccepted(sender, (AcceptedMessage) msg);
 		} else if (msg instanceof ConfirmMessage){
 			handleConfirm(sender, (ConfirmMessage) msg);
-		}
-	}
-
-	private void handlePrepare(String sender, PrepareMessage msg) {
-		failCheck.checkFailure(FailCheck.FailureType.RECEIVEPROPOSE);
-
-		if (!instances.containsKey(msg.sequence)) {
-			instances.put(msg.sequence, new PaxosInstance(msg.sequence));
-		}
-		PaxosInstance instance = instances.get(msg.sequence);
-
-		synchronized (instance) {
-			if (msg.proposalNumber.compareTo(instance.promisedProposal) > 0) {
-				instance.promisedProposal = msg.proposalNumber;
-
-				PromiseMessage promise = new PromiseMessage(msg.sequence,
-						msg.proposalNumber,
-						instance.acceptedProposal,
-						instance.acceptedValue);
-
-				logger.fine("Sending PROMISE to " + sender + " for seq=" + msg.sequence);
-				gcl.sendMsg(promise, sender);
-
-				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
-			} else {
-				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
-			}
-		}
-	}
-
-	private void handlePromise(String sender, PromiseMessage msg) {
-		PaxosInstance instance = instances.get(msg.sequence);
-
-		// shouldn't happen...
-		if (instance == null) {
-			logger.fine("Received PROMISE from " + sender + " for unknown seq=" + msg.sequence);
-			return;
-		}
-
-		synchronized (instance) {
-			if (instance.decided) {
-				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence + " (already decided)");
-				return;
-			}
-
-			if (!msg.proposalNumber.equals(instance.myProposal)) {
-				logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence +
-						" (proposal mismatch: got " + msg.proposalNumber + ", expected " + instance.myProposal + ")");
-				return;
-			}
-
-			instance.promiseCount++;
-			logger.fine("Received PROMISE from " + sender + " for seq=" + msg.sequence +
-					" (count=" + instance.promiseCount + "/" + MAJORITY + ")");
-
-			if (msg.acceptedValue != null) {
-				// Track highest accepted value
-				if (instance.highestAccepted == null || msg.acceptedProposal.compareTo(instance.highestAccepted) > 0) {
-					instance.highestAccepted = msg.acceptedProposal;
-					instance.highestAcceptedValue = msg.acceptedValue;
-					logger.fine("Updating highest accepted value for seq=" + msg.sequence +
-							": proposal=" + msg.acceptedProposal + ", value=" + msg.acceptedValue);
-				} else {
-					logger.fine("Ignoring previously accepted value from " + sender +
-							" (proposal " + msg.acceptedProposal + " <= current highest " + instance.highestAccepted + ")");
-				}
-			}
-
-			// once received promise from the majority
-			if (instance.promiseCount >= MAJORITY) {
-				logger.fine("Reached majority promises for seq=" + msg.sequence + " (count=" + instance.promiseCount + ")");
-
-				failCheck.checkFailure(FailCheck.FailureType.AFTERBECOMINGLEADER);
-
-				// Phase 2a
-				Object valueToPropose = null;
-				// adopt to the previously accepted value with highest ballot ID
-				if (instance.highestAcceptedValue != null) {
-					valueToPropose = instance.highestAcceptedValue;
-					logger.fine("Adopting highest accepted value for seq=" + msg.sequence + ": " + valueToPropose);
-				} else {
-					valueToPropose = instance.proposedValue;
-					logger.fine("Using original proposed value for seq=" + msg.sequence + ": " + valueToPropose);
-				}
-
-				if (valueToPropose != null) {
-					AcceptMessage accept = new AcceptMessage(
-							msg.sequence,
-							msg.proposalNumber,
-							valueToPropose);
-
-					instance.acceptCount = 0;
-					instance.proposedValue = valueToPropose;
-
-					logger.fine("Sending ACCEPT for seq=" + msg.sequence + " value=" + valueToPropose);
-					gcl.multicastMsg(accept, this.allOtherProcesses);
-				} else {
-					logger.warning("No value to propose for seq=" + msg.sequence + " despite reaching majority!");
-				}
-			}
-		}
-	}
-
-	private void handleAccept(String sender, AcceptMessage msg) {
-		if (!instances.containsKey(msg.sequence)) {
-			instances.put(msg.sequence, new PaxosInstance(msg.sequence));
-		}
-		PaxosInstance instance = instances.get(msg.sequence);
-
-		synchronized (instance) {
-			if (msg.proposalNumber.compareTo(instance.promisedProposal) >= 0) {
-				instance.promisedProposal = msg.proposalNumber;
-				instance.acceptedProposal = msg.proposalNumber;
-				instance.acceptedValue = msg.value;
-
-				AcceptedMessage accepted = new AcceptedMessage(msg.sequence, msg.proposalNumber);
-
-				logger.fine("Sending ACCEPTED to " + sender + " for seq=" + msg.sequence);
-				gcl.sendMsg(accepted, sender);
-			}
-		}
-	}
-
-	private void handleAccepted(String sender, AcceptedMessage msg) {
-		PaxosInstance instance = instances.get(msg.sequence);
-		if (instance == null){
-			return;
-		}
-		synchronized (instance) {
-			if (instance.decided){
-				return;
-			}
-
-			if (!msg.proposalNumber.equals(instance.myProposal)) {
-				return;
-			}
-
-			instance.acceptCount++;
-
-			if (instance.acceptCount >= MAJORITY && !instance.decided) {
-				instance.decided = true;
-				instance.acceptedValue = instance.proposedValue;
-
-				failCheck.checkFailure(FailCheck.FailureType.AFTERVALUEACCEPT);
-
-				logger.info("Consensus reached for seq=" + msg.sequence + " value=" + instance.acceptedValue);
-
-				// Mark pending value as accepted
-				PendingValue pv = pendingValues.get(msg.sequence);
-				if (pv != null && pv.value.equals(instance.acceptedValue)) {
-					markAccepted(pv);
-					pendingValues.remove(msg.sequence);
-				}
-
-				deliverValue(msg.sequence, instance.acceptedValue);
-
-				ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
-
-				logger.fine("Sending CONFIRM to " + sender + " for seq=" + msg.sequence);
-				gcl.multicastMsg(confirm, this.allOtherProcesses);
-
-				// Move to next sequence
-				currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
-			}
-		}
-	}
-
-	private void handleConfirm(String sender, ConfirmMessage msg) {
-		PaxosInstance instance = instances.get(msg.sequence);
-		if (instance == null) {
-			return;
-		}
-
-		synchronized (instance) {
-			if (!msg.proposalNumber.equals(instance.acceptedProposal)) {
-				return;
-			}
-			instance.decided = true;
-
-			deliverValue(msg.sequence, instance.acceptedValue);
-
-			// Move to next sequence
-			currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
 		}
 	}
 
@@ -443,8 +467,9 @@ public class Paxos implements GCDeliverListener {
 					int seq = entry.getKey();
 					PendingValue pv = entry.getValue();
 
-					if (!pv.accepted && seq < currentSequence.get()) {
+					if ( (pv.rejected) || (!pv.accepted && seq < currentSequence.get())) {
 						foundPendingValue = true;
+						pv.rejected = false;
 						pendingValues.remove(seq);
 						int newSeq = currentSequence.getAndIncrement();
 						pendingValues.put(newSeq, pv);
@@ -471,9 +496,10 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	// Helper classes
-	private static class PendingValue {
+	class PendingValue {
 		final Object value;
 		volatile boolean accepted = false;
+		volatile boolean rejected = false;
 
 		PendingValue(Object value) {
 			this.value = value;
