@@ -179,7 +179,7 @@ public class Paxos implements GCDeliverListener {
 			instance.proposalNumber++;
 			ProposedSeq ps = new ProposedSeq(instance.proposalNumber, myProcess);
 			instance.myProposal = ps;
-			instance.promiseCount = 0;
+			instance.promiseCount = 1;
 			instance.highestAccepted = null;
 
 			PrepareMessage prepare = new PrepareMessage(seq, ps);
