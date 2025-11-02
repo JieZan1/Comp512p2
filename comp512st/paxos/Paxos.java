@@ -176,6 +176,7 @@ public class Paxos implements GCDeliverListener {
 
 			// Phase 1a
 			instance.proposalNumber = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
+			instance.proposedValue = val;
 
 			ProposedSeq ps = new ProposedSeq(instance.proposalNumber, myProcess);
 			instance.myProposal = ps;
@@ -283,14 +284,8 @@ public class Paxos implements GCDeliverListener {
 					valueToPropose = instance.highestAcceptedValue;
 					logger.fine("Adopting highest accepted value for seq=" + msg.sequence + ": " + valueToPropose);
 				} else {
-					// Use original proposed value
-					PendingValue pv = pendingValues.get(msg.sequence);
-					if (pv != null) {
-						valueToPropose = pv.value;
-						logger.fine("Using original proposed value for seq=" + msg.sequence + ": " + valueToPropose);
-					} else {
-						logger.fine("No pending value found for seq=" + msg.sequence);
-					}
+					valueToPropose = instance.proposedValue;
+					logger.fine("Using original proposed value for seq=" + msg.sequence + ": " + valueToPropose);
 				}
 
 				if (valueToPropose != null) {
