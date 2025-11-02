@@ -33,7 +33,7 @@ public class Paxos implements GCDeliverListener {
 	private LinkedBlockingQueue<Object> deliveryQueue = new LinkedBlockingQueue<>();
 
 	// Pending values that haven't been ordered yet
-	private ConcurrentHashMap<Integer, PendingValue> pendingValues = new ConcurrentHashMap<>();
+	private volatile PendingValue currentPendingValue = null;
 
 	// State for each Paxos instance (sequence number)
 	private ConcurrentHashMap<Integer, PaxosInstance> instances = new ConcurrentHashMap<>();
@@ -89,7 +89,8 @@ public class Paxos implements GCDeliverListener {
 
 		int seq = currentSequence.get();
 		PendingValue pv = new PendingValue(encapsulated_val);
-		pendingValues.put(seq, pv);
+
+		currentPendingValue = pv;
 
 		logger.fine("Broadcasting value for sequence " + seq + ": " + val);
 
@@ -135,11 +136,8 @@ public class Paxos implements GCDeliverListener {
 			retryThread.interrupt();
 		}
 
-		// Wake up any waiting threads
-		for (PendingValue pv : pendingValues.values()) {
-			synchronized (pv) {
-				pv.notifyAll();
-			}
+		synchronized (currentPendingValue) {
+			currentPendingValue.notifyAll();
 		}
 
 		gcl.shutdownGCL();
@@ -439,7 +437,7 @@ public class Paxos implements GCDeliverListener {
 				gcl.sendMsg(accepted, sender);
 			}
 			else {
-				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, msg.proposalNumber);
+				RejectAcceptMessage reject = new RejectAcceptMessage(msg.sequence, msg.proposalNumber);
 				gcl.sendMsg(reject, sender);
 				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
@@ -584,81 +582,28 @@ public class Paxos implements GCDeliverListener {
 		int currentTimeout = this.retry_timeout;
 		final int MAX_TIMEOUT = 100000000;
 		final double BACKOFF_MULTIPLIER = 1.2;
-		final double JITTER_FACTOR = 0.3;
-		Random random = new Random();
 
 		while (!isShutdown) {
 			try {
-				double jitter = 1.0 + (random.nextDouble() * 2 - 1) * JITTER_FACTOR;
-				int jitteredTimeout = (int) (currentTimeout * jitter);
-
-				Thread.sleep(jitteredTimeout);
+				Thread.sleep(100);
 
 				boolean foundPendingValue = false;
 
-				// Create snapshot to avoid concurrent modification
-				List<Map.Entry<Integer, PendingValue>> snapshot =
-						new ArrayList<>(pendingValues.entrySet());
-
-				// First, check for explicitly rejected values
-				Map.Entry<Integer, PendingValue> targetEntry = null;
-
-				for (Map.Entry<Integer, PendingValue> entry : snapshot) {
-					int seq = entry.getKey();
-					PendingValue pv = entry.getValue();
-
+				PendingValue pv = currentPendingValue;
+				if (pv != null) {
 					synchronized (pv) {
-						if (pv.rejected && !pv.accepted) {
-							targetEntry = entry;
-							logger.info("Found rejected value at seq=" + seq);
-							break;
-						}
-					}
-				}
+						long currentTime = System.currentTimeMillis();
+						boolean isTimedOut = (currentTime - pv.proposeTime) > currentTimeout;
 
-				// If no rejected values, find the oldest pending value
-				if (targetEntry == null) {
-					long oldestTime = Long.MAX_VALUE;
-					for (Map.Entry<Integer, PendingValue> entry : snapshot) {
-						PendingValue pv = entry.getValue();
-						synchronized (pv) {
-							if (!pv.accepted && pv.proposeTime < oldestTime) {
-								oldestTime = pv.proposeTime;
-								targetEntry = entry;
-							}
-						}
-					}
-				}
-
-				// If we found a pending value to retry
-				if (targetEntry != null) {
-					int oldSeq = targetEntry.getKey();
-					PendingValue pv = targetEntry.getValue();
-
-					boolean shouldRetry = false;
-					synchronized (pv) {
-						// Double-check it still needs retry
-						if (!pv.accepted) {
-							shouldRetry = true;
+						if (!pv.accepted && (pv.rejected || isTimedOut)) {
+							foundPendingValue = true;
+							int targetSeq = findAvailableSequence();
 							pv.rejected = false;
 							pv.proposeTime = System.currentTimeMillis();
+
+							logger.info("Retrying proposal at seq=" + targetSeq);
+							proposeValue(targetSeq, pv.value, pv);
 						}
-					}
-
-					if (shouldRetry) {
-						foundPendingValue = true;
-
-						// Find a sequence number by looking for gaps in instance keys
-						int targetSeq = findAvailableSequence();
-
-						// Atomically move the pending value
-						pendingValues.put(targetSeq, pv);  // Add first
-						pendingValues.remove(oldSeq);       // Remove second
-
-						logger.info("Retrying pending value from seq=" + oldSeq +
-								" to seq=" + targetSeq);
-
-						proposeValue(targetSeq, pv.value, pv);
 					}
 				}
 
@@ -686,29 +631,31 @@ public class Paxos implements GCDeliverListener {
 	 * If no gap found, return highest key + 1.
 	 */
 	private int findAvailableSequence() {
-		if (instances.isEmpty()) {
-			return 1;
-		}
-
-		// Get all instance keys and sort them
-		List<Integer> keys = new ArrayList<>(instances.keySet());
-		Collections.sort(keys);
-
-		// Look for gaps in the sequence
-		int expectedSeq = keys.get(0);
-		for (int key : keys) {
-			if (key > expectedSeq) {
-				// Found a gap
-				logger.info("Found gap at sequence " + expectedSeq);
-				return expectedSeq;
+		synchronized (instances) {
+			if (instances.isEmpty()) {
+				return 1;
 			}
-			expectedSeq = key + 1;
-		}
 
-		// No gap found, return highest + 1
-		int nextSeq = keys.get(keys.size() - 1) + 1;
-		logger.info("No gap found, using sequence " + nextSeq);
-		return nextSeq;
+			// Get all instance keys and sort them
+			List<Integer> keys = new ArrayList<>(instances.keySet());
+			Collections.sort(keys);
+
+			// Look for gaps in the sequence
+			int expectedSeq = keys.get(0);
+			for (int key : keys) {
+				if (key > expectedSeq) {
+					// Found a gap
+					logger.info("Found gap at sequence " + expectedSeq);
+					return expectedSeq;
+				}
+				expectedSeq = key + 1;
+			}
+
+			// No gap found, return highest + 1
+			int nextSeq = keys.get(keys.size() - 1) + 1;
+			logger.info("No gap found, using sequence " + nextSeq);
+			return nextSeq;
+		}
 	}
 
 	// Helper classes
