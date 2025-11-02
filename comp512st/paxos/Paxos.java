@@ -416,22 +416,44 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	private void retryPendingValues() {
+		int currentTimeout = this.retry_timeout;
+		final int MAX_TIMEOUT = 3000; // Maximum 5 seconds
+		final double BACKOFF_MULTIPLIER = 1.2;
+		final double JITTER_FACTOR = 0.3; // ±30% randomness
+		Random random = new Random();
+
 		while (!isShutdown) {
 			try {
-				Thread.sleep(this.retry_timeout);
+				// Add random jitter to the timeout
+				double jitter = 1.0 + (random.nextDouble() * 2 - 1) * JITTER_FACTOR;
+				int jitteredTimeout = (int) (currentTimeout * jitter);
+
+				Thread.sleep(jitteredTimeout);
 
 				// Check for pending values that need retry
+				boolean foundPendingValue = false;
 				for (Map.Entry<Integer, PendingValue> entry : pendingValues.entrySet()) {
 					int seq = entry.getKey();
 					PendingValue pv = entry.getValue();
 
 					if (!pv.accepted && seq < currentSequence.get()) {
+						foundPendingValue = true;
 						pendingValues.remove(seq);
 						int newSeq = currentSequence.getAndIncrement();
 						pendingValues.put(newSeq, pv);
 						proposeValue(newSeq, pv.value, pv);
 					}
 				}
+
+				// Increase timeout if we had retries, reset if idle
+				if (foundPendingValue) {
+					currentTimeout = Math.min((int)(currentTimeout * BACKOFF_MULTIPLIER), MAX_TIMEOUT);
+					logger.fine("Increased retry timeout to " + currentTimeout + "ms");
+				} else {
+					// Reset to base timeout if nothing to retry
+					currentTimeout = this.retry_timeout;
+				}
+
 			} catch (InterruptedException e) {
 				if (!isShutdown) {
 					logger.log(Level.WARNING, "Retry thread interrupted", e);
