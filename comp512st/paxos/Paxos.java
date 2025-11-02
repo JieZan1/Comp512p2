@@ -386,6 +386,7 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (!msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
+				logger.fine("Received Stale confirm from " + sender + " for seq=" + msg.sequence);
 				return;
 			}
 
@@ -415,28 +416,79 @@ public class Paxos implements GCDeliverListener {
 		}
 	}
 
-	private void deliverValue(int seq, Object value) {
+	private synchronized void deliverValue(int seq, Object value) {
+		logger.info("deliverValue ENTRY: seq=" + seq +
+				", value=" + value +
+				", currentDeliveredSeq=" + deliveredSeqence.get() +
+				", bufferSize=" + deliverBuffer.size());
+
 		// Use putIfAbsent to avoid race condition
-		if (deliverBuffer.putIfAbsent(seq, value) != null) {
-			return; // Already delivered
+		Object existingValue = deliverBuffer.putIfAbsent(seq, value);
+		if (existingValue != null) {
+			// Value already exists for this sequence
+			logger.warning("deliverValue DUPLICATE: seq=" + seq +
+					" already exists in buffer with value=" + existingValue);
+			return;
 		}
 
-		// Lock ONLY the delivery mechanism, not the whole object
-		synchronized (deliveryLock) {
-			try {
-				while (deliverBuffer.containsKey(deliveredSeqence.get())) {
-					Object val = deliverBuffer.remove(deliveredSeqence.get());
-					if (val != null) {
-						deliveryQueue.put(val);
-						logger.fine("Delivered value for seq=" + deliveredSeqence.get());
-						deliveredSeqence.incrementAndGet();
-					}
+		logger.fine("deliverValue BUFFERED: seq=" + seq + " added to buffer");
+
+		// Synchronize on deliveredSequence to ensure only one thread delivers at a time
+		try {
+			int deliveryCount = 0;
+			int expectedSeq = deliveredSeqence.get();
+
+			logger.fine("deliverValue LOOP START: expecting seq=" + expectedSeq +
+					", buffer contains keys=" + deliverBuffer.keySet());
+
+			while (deliverBuffer.containsKey(deliveredSeqence.get())) {
+				int currentSeq = deliveredSeqence.get();
+
+				logger.fine("deliverValue LOOP ITERATION: attempting to deliver seq=" + currentSeq);
+
+				Object val = deliverBuffer.remove(currentSeq);
+
+				if (val != null) {
+					logger.info("deliverValue DELIVERING: seq=" + currentSeq +
+							", value=" + val +
+							", queueSize=" + deliveryQueue.size());
+
+					deliveryQueue.put(val);
+
+					logger.info("deliverValue QUEUED: seq=" + currentSeq +
+							" successfully added to deliveryQueue");
+
+					int newSeq = deliveredSeqence.incrementAndGet();
+					deliveryCount++;
+
+					logger.fine("deliverValue INCREMENTED: deliveredSeq now=" + newSeq);
+				} else {
+					logger.warning("deliverValue NULL VALUE: seq=" + currentSeq +
+							" was in buffer but value was null");
+					// This shouldn't happen, but increment anyway to avoid infinite loop
+					deliveredSeqence.incrementAndGet();
 				}
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				logger.log(Level.WARNING, "Interrupted while delivering value", e);
 			}
+
+			logger.info("deliverValue LOOP END: delivered " + deliveryCount +
+					" messages, deliveredSeq now=" + deliveredSeqence.get() +
+					", remaining buffer keys=" + deliverBuffer.keySet());
+
+			logger.fine("deliverValue COMPLETE: seq=" + seq);
+
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt(); // Restore interrupt status
+			logger.log(Level.SEVERE, "deliverValue INTERRUPTED: seq=" + seq +
+					", deliveredSeq=" + deliveredSeqence.get() +
+					", bufferSize=" + deliverBuffer.size(), e);
+		} catch (Exception e) {
+			logger.log(Level.SEVERE, "deliverValue UNEXPECTED ERROR: seq=" + seq +
+					", deliveredSeq=" + deliveredSeqence.get(), e);
 		}
+
+		logger.info("deliverValue EXIT: seq=" + seq +
+				", deliveredSeq=" + deliveredSeqence.get() +
+				", bufferSize=" + deliverBuffer.size());
 	}
 
 	private void markAccepted(PendingValue pv) {
