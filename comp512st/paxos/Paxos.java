@@ -417,7 +417,7 @@ public class Paxos implements GCDeliverListener {
 
 	private void retryPendingValues() {
 		int currentTimeout = this.retry_timeout;
-		final int MAX_TIMEOUT = 3000; // Maximum 5 seconds
+		final int MAX_TIMEOUT = 100000000; // Maximum 5 seconds
 		final double BACKOFF_MULTIPLIER = 1.2;
 		final double JITTER_FACTOR = 0.3; // ±30% randomness
 		Random random = new Random();
