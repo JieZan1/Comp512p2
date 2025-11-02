@@ -415,28 +415,28 @@ public class Paxos implements GCDeliverListener {
 		}
 	}
 
-	private synchronized void deliverValue(int seq, Object value) {
+	private void deliverValue(int seq, Object value) {
 		// Use putIfAbsent to avoid race condition
 		if (deliverBuffer.putIfAbsent(seq, value) != null) {
-			// Value already exists for this sequence
-			return;
+			return; // Already delivered
 		}
 
-		// Synchronize on deliveredSequence to ensure only one thread delivers at a time
-		try {
-			while (deliverBuffer.containsKey(deliveredSeqence.get())) {
-				Object val = deliverBuffer.remove(deliveredSeqence.get());
-				if (val != null) {
-					deliveryQueue.put(val);
-					deliveredSeqence.incrementAndGet();
+		// Lock ONLY the delivery mechanism, not the whole object
+		synchronized (deliveryLock) {
+			try {
+				while (deliverBuffer.containsKey(deliveredSeqence.get())) {
+					Object val = deliverBuffer.remove(deliveredSeqence.get());
+					if (val != null) {
+						deliveryQueue.put(val);
+						logger.fine("Delivered value for seq=" + deliveredSeqence.get());
+						deliveredSeqence.incrementAndGet();
+					}
 				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				logger.log(Level.WARNING, "Interrupted while delivering value", e);
 			}
-			logger.fine("Delivered value for seq=" + seq);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt(); // Restore interrupt status
-			logger.log(Level.WARNING, "Interrupted while delivering value", e);
 		}
-
 	}
 
 	private void markAccepted(PendingValue pv) {
