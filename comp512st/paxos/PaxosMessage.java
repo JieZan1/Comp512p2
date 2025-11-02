@@ -5,7 +5,7 @@ import java.io.Serializable;
 abstract class PaxosMessage implements Serializable {
     final int sequence;
 
-    PaxosMessage(int sequence) {
+    public PaxosMessage(int sequence) {
         this.sequence = sequence;
     }
     @Override
@@ -17,7 +17,7 @@ abstract class PaxosMessage implements Serializable {
 class PrepareMessage extends PaxosMessage {
     final ProposedSeq proposalNumber;
 
-    PrepareMessage(int sequence, ProposedSeq proposalNumber) {
+    public PrepareMessage(int sequence, ProposedSeq proposalNumber) {
         super(sequence);
         this.proposalNumber = proposalNumber;
     }
@@ -33,7 +33,7 @@ class PromiseMessage extends PaxosMessage {
     final ProposedSeq acceptedProposal;
     final Object acceptedValue;
 
-    PromiseMessage(int sequence, ProposedSeq proposalNumber,
+    public PromiseMessage(int sequence, ProposedSeq proposalNumber,
                    ProposedSeq acceptedProposal, Object acceptedValue) {
         super(sequence);
         this.proposalNumber = proposalNumber;
@@ -56,7 +56,7 @@ class AcceptMessage extends PaxosMessage {
     final ProposedSeq proposalNumber;
     final Object value;
 
-    AcceptMessage(int sequence, ProposedSeq proposalNumber, Object value) {
+    public AcceptMessage(int sequence, ProposedSeq proposalNumber, Object value) {
         super(sequence);
         this.proposalNumber = proposalNumber;
         this.value = value;
@@ -73,7 +73,7 @@ class AcceptMessage extends PaxosMessage {
 class AcceptedMessage extends PaxosMessage {
     final ProposedSeq proposalNumber;
 
-    AcceptedMessage(int sequence, ProposedSeq proposalNumber) {
+    public AcceptedMessage(int sequence, ProposedSeq proposalNumber) {
         super(sequence);
         this.proposalNumber = proposalNumber;
     }
@@ -88,7 +88,7 @@ class AcceptedMessage extends PaxosMessage {
 class ConfirmMessage extends PaxosMessage {
     final ProposedSeq proposalNumber;
 
-    ConfirmMessage(int sequence, ProposedSeq proposalNumber) {
+    public ConfirmMessage(int sequence, ProposedSeq proposalNumber) {
         super(sequence);
         this.proposalNumber = proposalNumber;
     }

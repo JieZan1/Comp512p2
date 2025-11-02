@@ -20,7 +20,7 @@ class PaxosInstance {
     Object highestAcceptedValue = null;
     ProposedSeq highestAccepted = null;
 
-    PaxosInstance(int sequence) {
+    public PaxosInstance(int sequence) {
         this.sequence = sequence;
     }
 }

@@ -46,9 +46,6 @@ public class Paxos implements GCDeliverListener {
 
 	private int retry_timeout = 200;
 
-	// For synchronization
-	private final Object proposalLock = new Object();
-
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck)
 			throws IOException, UnknownHostException {
 		this.failCheck = failCheck;
@@ -74,8 +71,6 @@ public class Paxos implements GCDeliverListener {
 
 	// Application calls this to broadcast a message
 	public void broadcastTOMsg(Object val) {
-		// block until called
-
 		if (isShutdown) {
 			throw new IllegalStateException("Paxos is shutdown");
 		}
@@ -88,7 +83,6 @@ public class Paxos implements GCDeliverListener {
 
 		logger.fine("Broadcasting value for sequence " + seq + ": " + val);
 
-		// Try to propose this value
 		proposeValue(seq, encapsulated_val, pv);
 
 		// Block until this value is accepted by majority
@@ -97,7 +91,7 @@ public class Paxos implements GCDeliverListener {
 				try {
 					pv.wait();
 				} catch (InterruptedException e) {
-					logger.log(Level.WARNING, "Interrupted while waiting for acceptance", e);
+					logger.log(Level.WARNING, "Unexpected exception while waiting for acceptance", e);
 				}
 			}
 		}
@@ -105,7 +99,6 @@ public class Paxos implements GCDeliverListener {
 		logger.fine("Value accepted for sequence " + seq);
 	}
 
-	// Application calls this to get next message in order
 	public Object acceptTOMsg() throws InterruptedException {
 		Object result = null;
 		while (true) {
@@ -140,8 +133,7 @@ public class Paxos implements GCDeliverListener {
 		gcl.shutdownGCL();
 	}
 
-	// GCL message delivery callback
-	//Override to handel
+	// This function is called whenever a GC message is received and read
 	@Override
 	public void deliver(String sender, Object msg) {
 		logger.fine("Delivering message " + msg);
@@ -164,7 +156,7 @@ public class Paxos implements GCDeliverListener {
 
 		synchronized (instance) {
 			if (instance.decided) {
-				// Already decided, move to next sequence
+				// if the current sequence is already decided, move to the next sequence
 				if (val.equals(instance.acceptedValue)) {
 					markAccepted(pv);
 				} else {
@@ -176,16 +168,16 @@ public class Paxos implements GCDeliverListener {
 				return;
 			}
 
-			// Phase 1a: Prepare - Propose to become leader
+			// Phase 1a
 			instance.proposalNumber++;
-			ProposedSeq pn = new ProposedSeq(instance.proposalNumber, myProcess);
-			instance.myProposal = pn;
+			ProposedSeq ps = new ProposedSeq(instance.proposalNumber, myProcess);
+			instance.myProposal = ps;
 			instance.promiseCount = 0;
 			instance.highestAccepted = null;
 
-			PrepareMessage prepare = new PrepareMessage(seq, pn);
+			PrepareMessage prepare = new PrepareMessage(seq, ps);
 
-			logger.fine("Sending PREPARE for seq=" + seq + " with proposal=" + pn);
+			logger.fine("Sending PREPARE for seq=" + seq + " with proposal=" + ps);
 			gcl.multicastMsg(prepare, this.allOtherProcesses);
 
 			failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
@@ -218,8 +210,7 @@ public class Paxos implements GCDeliverListener {
 			if (msg.proposalNumber.compareTo(instance.promisedProposal) > 0) {
 				instance.promisedProposal = msg.proposalNumber;
 
-				PromiseMessage promise = new PromiseMessage(
-						msg.sequence,
+				PromiseMessage promise = new PromiseMessage(msg.sequence,
 						msg.proposalNumber,
 						instance.acceptedProposal,
 						instance.acceptedValue);
@@ -229,7 +220,6 @@ public class Paxos implements GCDeliverListener {
 
 				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			} else {
-				// Send NACK
 				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
 		}
@@ -365,7 +355,6 @@ public class Paxos implements GCDeliverListener {
 					pendingValues.remove(msg.sequence);
 				}
 
-				// Deliver to application
 				deliverValue(msg.sequence, instance.acceptedValue);
 
 				ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
@@ -391,8 +380,8 @@ public class Paxos implements GCDeliverListener {
 			}
 			instance.decided = true;
 
-			// Deliver to application
 			deliverValue(msg.sequence, instance.acceptedValue);
+
 			// Move to next sequence
 			currentSequence.compareAndSet(msg.sequence, msg.sequence + 1);
 		}
@@ -431,7 +420,6 @@ public class Paxos implements GCDeliverListener {
 					PendingValue pv = entry.getValue();
 
 					if (!pv.accepted && seq < currentSequence.get()) {
-						// This value didn't make it, move to current sequence
 						pendingValues.remove(seq);
 						int newSeq = currentSequence.getAndIncrement();
 						pendingValues.put(newSeq, pv);
