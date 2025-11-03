@@ -392,8 +392,8 @@ public class Paxos implements GCDeliverListener {
 
 				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			} else {
-//				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, instance.acceptor.promisedProposal);
-//				gcl.sendMsg(reject, sender);
+				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, instance.acceptor.promisedProposal);
+				gcl.sendMsg(reject, sender);
 				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
 		}
@@ -436,8 +436,8 @@ public class Paxos implements GCDeliverListener {
 				gcl.sendMsg(accepted, sender);
 			}
 			else {
-//				RejectAcceptMessage reject = new RejectAcceptMessage(msg.sequence, msg.proposalNumber);
-//				gcl.sendMsg(reject, sender);
+				RejectAcceptMessage reject = new RejectAcceptMessage(msg.sequence, msg.proposalNumber);
+				gcl.sendMsg(reject, sender);
 				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
 			}
 		}
