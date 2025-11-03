@@ -16,7 +16,7 @@ class PaxosInstance {
         this.sequence = sequence;
         this.acceptor = new AcceptorState();
         this.proposer = null; // Created only when needed
-        startTime = System.currentTimeMillis();
+        this.startTime = System.currentTimeMillis();
     }
 
     public void initializeAsProposer(ProposedSeq proposal, Object value, Paxos.PendingValue pv) {

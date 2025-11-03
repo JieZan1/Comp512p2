@@ -606,6 +606,8 @@ public class Paxos implements GCDeliverListener {
 		final int MAX_TIMEOUT = 1000;
 		final double BACKOFF_MULTIPLIER = 1.2;
 
+		int reproposeTimeout = 3000;
+
 		while (!isShutdown) {
 			try {
 				Thread.sleep(10);
@@ -645,7 +647,7 @@ public class Paxos implements GCDeliverListener {
 
 						long currentTime = System.currentTimeMillis();
 						// Check if this instance has timed out
-						boolean isTimedOut = (currentTime - instance.startTime) > 3 * currentTimeout;
+						boolean isTimedOut = (currentTime - instance.startTime) > reproposeTimeout;
 
 						if (isTimedOut) {
 								// Phase 1a
@@ -654,6 +656,7 @@ public class Paxos implements GCDeliverListener {
 
 							// Initialize as proposer
 							instance.initializeAsProposer(ps, pv.value, pv);
+							instance.startTime = System.currentTimeMillis();
 
 							PrepareMessage prepare = new PrepareMessage(seq, ps);
 
