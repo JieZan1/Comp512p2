@@ -89,7 +89,7 @@ public class Paxos implements GCDeliverListener {
 
 		LabelObj encapsulated_val = new LabelObj(val, localSeqence.getAndIncrement(), myProcess);
 
-		int seq = currentSequence.get();
+		int seq = findAvailableSequence();
 		PendingValue pv = new PendingValue(encapsulated_val);
 
 		currentPendingValue = pv;
@@ -177,12 +177,13 @@ public class Paxos implements GCDeliverListener {
 			if (instance.decided) {
 				if (val.equals(instance.acceptor.acceptedValue)) {
 					markAccepted(pv);
-				} else {
-					int targetSeq = findAvailableSequence();
-					pv.rejected = false;
-					pv.proposeTime = System.currentTimeMillis();
-					proposeValue(targetSeq, val, pv);
 				}
+//				else {
+//					int targetSeq = findAvailableSequence();
+//					pv.rejected = false;
+//					pv.proposeTime = System.currentTimeMillis();
+//					proposeValue(targetSeq, val, pv);
+//				}
 				return;
 			}
 
@@ -586,7 +587,7 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	private void retryPendingValues() {
-		int currentTimeout = this.retry_timeout;
+		int currentTimeout = 300;
 		final int MAX_TIMEOUT = 1000;
 		final double BACKOFF_MULTIPLIER = 1.2;
 
@@ -610,6 +611,29 @@ public class Paxos implements GCDeliverListener {
 
 							logger.info("Retrying proposal at seq=" + targetSeq);
 							proposeValue(targetSeq, pv.value, pv);
+						}
+					}
+				}
+
+				// Check all Paxos instances for undecided proposals
+				List<Map.Entry<Integer, PaxosInstance>> instanceSnapshot =
+						new ArrayList<>(instances.entrySet());
+
+				for (Map.Entry<Integer, PaxosInstance> entry : instanceSnapshot) {
+					int seq = entry.getKey();
+					PaxosInstance instance = entry.getValue();
+
+					synchronized (instance) {
+						// Skip if already decided
+						if (instance.decided) {
+							continue;
+						}
+						long currentTime = System.currentTimeMillis();
+						// Check if this instance has timed out
+						boolean isTimedOut = (currentTime - instance.startTime) > 3 * currentTimeout;
+
+						if (isTimedOut) {
+							instances.remove(seq);
 						}
 					}
 				}
