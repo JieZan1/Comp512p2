@@ -257,15 +257,15 @@ public class Paxos implements GCDeliverListener {
 				if (valueToPropose != null) {
 					AcceptMessage accept = new AcceptMessage(
 							msg.sequence,
-							msg.proposalNumber,
+							instance.proposer.myProposal,
 							valueToPropose
 					);
 
 					instance.proposer.acceptCount = 0;
 					instance.proposer.proposedValue = valueToPropose;
 					// As an acceptor, accept our own proposal
-					instance.acceptor.promisedProposal = msg.proposalNumber;
-					instance.acceptor.acceptedProposal = msg.proposalNumber;
+					instance.acceptor.promisedProposal = instance.proposer.myProposal;
+					instance.acceptor.acceptedProposal = instance.proposer.myProposal;
 					instance.acceptor.acceptedValue = valueToPropose;
 
 					logger.fine("Sending ACCEPT for seq=" + msg.sequence);
@@ -657,12 +657,9 @@ public class Paxos implements GCDeliverListener {
 							// Initialize as proposer
 							instance.initializeAsProposer(ps, pv.value, pv);
 							instance.startTime = System.currentTimeMillis();
-
 							PrepareMessage prepare = new PrepareMessage(seq, ps);
-
 							logger.fine("Sending RETRY PREPARE for seq=" + seq + " with proposal=" + ps);
 							gcl.multicastMsg(prepare, this.allOtherProcesses);
-
 							failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
 							}
 
