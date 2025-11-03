@@ -44,14 +44,13 @@ public class Paxos implements GCDeliverListener {
 
 	private  Set<LabelObj> received_label_obj = Collections.synchronizedSet(new HashSet<>());
 
-	private final Object deliveryLock = new Object();
-
 	private volatile boolean isShutdown = false;
 
 	// Thread for retrying failed proposals
 	private Thread retryThread;
 
 	private int retry_timeout = 200;
+    private int currentTimeout = retry_timeout;
 
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck)
 			throws IOException, UnknownHostException {
@@ -147,7 +146,7 @@ public class Paxos implements GCDeliverListener {
 	// This function is called whenever a GC message is received and read
 	@Override
 	public void deliver(String sender, Object msg) {
-		logger.fine("Delivering message " + msg);
+		logger.fine("Receiving message " + msg + "from " + sender);
 		if (isShutdown)
 			return;
 		try {
@@ -163,7 +162,7 @@ public class Paxos implements GCDeliverListener {
 
 	//------------------------------
   	//         Proposer Logic
-	//----------------------------
+	//------------------------------
 
 	private void proposeValue(int seq, Object val, PendingValue pv) {
 		if (!instances.containsKey(seq)) {
@@ -316,6 +315,7 @@ public class Paxos implements GCDeliverListener {
 
 				deliverValue(msg.sequence, instance.proposer.proposedValue);
 
+                logger.info("Broadcasting CONFIRM for seq=" + msg.sequence);
 				ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
 				gcl.multicastMsg(confirm, this.allOtherProcesses);
 
@@ -446,8 +446,10 @@ public class Paxos implements GCDeliverListener {
 
 
 	private void handleConfirm(String sender, ConfirmMessage msg) {
+        logger.fine("Entered handleConfirm from " + sender + " for seq=" + msg.sequence);
 		PaxosInstance instance = instances.get(msg.sequence);
 		if (instance == null) {
+            logger.fine("handleConfirm: instance == null for seq=" + msg.sequence);
 			return;
 		}
 
@@ -495,9 +497,12 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	private synchronized void deliverValue(int seq, Object value) {
+        LabelObj labelVal = (LabelObj)value;
+        Object[] info  = (Object[]) labelVal.val;
 		logger.info("deliverValue ENTRY: seq=" + seq +
 				", value=" + value +
 				", currentDeliveredSeq=" + deliveredSeqence.get() +
+                ", move=" + Arrays.toString(info) + 
 				", bufferSize=" + deliverBuffer.size());
 
 		// Use putIfAbsent to avoid race condition
@@ -529,6 +534,7 @@ public class Paxos implements GCDeliverListener {
 				if (val != null) {
 					logger.info("deliverValue DELIVERING: seq=" + currentSeq +
 							", value=" + val +
+                            ", move2=" + Arrays.toString(info) +
 							", queueSize=" + deliveryQueue.size());
 
 					deliveryQueue.put(val);
@@ -577,8 +583,8 @@ public class Paxos implements GCDeliverListener {
 	}
 
 	private void retryPendingValues() {
-		int currentTimeout = this.retry_timeout;
-		final int MAX_TIMEOUT = 100000000;
+		currentTimeout = this.retry_timeout;
+		final int MAX_TIMEOUT = 10000;
 		final double BACKOFF_MULTIPLIER = 1.2;
 
 		while (!isShutdown) {
