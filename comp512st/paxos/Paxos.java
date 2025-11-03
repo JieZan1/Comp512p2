@@ -337,19 +337,23 @@ public class Paxos implements GCDeliverListener {
 
 	private void handleRejectPromise(String sender, RejectPromiseMessage msg){
 		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
-		if (instance.isProposer()) {
-			logger.info("Detected higher proposal " + msg.proposalNumber +
-					" for seq=" + msg.sequence + ". Abandoning my proposal.");
-			instance.abandonProposal();
+		synchronized (instance) {
+			if (instance.isProposer()) {
+				logger.info("Detected higher proposal " + msg.proposalNumber +
+						" for seq=" + msg.sequence + ". Abandoning my proposal.");
+				instance.abandonProposal();
+			}
 		}
 	}
 
 	private void handleRejectAccept(String sender, RejectAcceptMessage msg ){
 		PaxosInstance instance = instances.computeIfAbsent(msg.sequence, PaxosInstance::new);
-		if (instance.isProposer()) {
-			logger.info("Detected higher proposal " + msg.proposalNumber +
-					" for seq=" + msg.sequence + ". Abandoning my proposal.");
-			instance.abandonProposal();
+		synchronized (instance) {
+			if (instance.isProposer()) {
+				logger.info("Detected higher proposal " + msg.proposalNumber +
+						" for seq=" + msg.sequence + ". Abandoning my proposal.");
+				instance.abandonProposal();
+			}
 		}
 	}
 
@@ -436,6 +440,17 @@ public class Paxos implements GCDeliverListener {
 			}
 
 			if (msg.proposalNumber.compareTo(instance.acceptor.promisedProposal) >= 0) {
+				instance.acceptor.promisedProposal = msg.proposalNumber;
+				instance.acceptor.acceptedProposal = msg.proposalNumber;
+				instance.acceptor.acceptedValue = msg.value;
+
+				AcceptedMessage accepted = new AcceptedMessage(msg.sequence, msg.proposalNumber);
+
+				logger.fine("Sending ACCEPTED to " + sender + " for seq=" + msg.sequence);
+				gcl.sendMsg(accepted, sender);
+			}
+
+			else if (msg.proposalNumber.equals(MAX_PROPOSED_SEQ)) {
 				instance.acceptor.promisedProposal = msg.proposalNumber;
 				instance.acceptor.acceptedProposal = msg.proposalNumber;
 				instance.acceptor.acceptedValue = msg.value;
