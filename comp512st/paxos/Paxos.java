@@ -53,7 +53,7 @@ public class Paxos implements GCDeliverListener {
 	// Thread for retrying failed proposals
 	private Thread retryThread;
 
-	private int retry_timeout = 200;
+	private int retry_timeout = 400;
 
 	public Paxos(String myProcess, String[] allGroupProcesses, Logger logger, FailCheck failCheck)
 			throws IOException, UnknownHostException {
@@ -282,7 +282,7 @@ public class Paxos implements GCDeliverListener {
 			if (instance == null){return;}
 
 			if (instance.decided) {
-				if (msg.proposalNumber.equals(instance.proposer.myProposal)) {
+				if (msg.proposalNumber.equals(MAX_PROPOSED_SEQ)) {
 					ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
 					logger.info("Resending CONFIRM to " + sender + " for seq=" + msg.sequence +
 							" (already decided)");
@@ -587,12 +587,12 @@ public class Paxos implements GCDeliverListener {
 
 	private void retryPendingValues() {
 		int currentTimeout = this.retry_timeout;
-		final int MAX_TIMEOUT = 100000000;
+		final int MAX_TIMEOUT = 1000;
 		final double BACKOFF_MULTIPLIER = 1.2;
 
 		while (!isShutdown) {
 			try {
-				Thread.sleep(100);
+				Thread.sleep(10);
 
 				boolean foundPendingValue = false;
 
