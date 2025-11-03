@@ -427,7 +427,7 @@ public class Paxos implements GCDeliverListener {
 				instance.abandonProposal();
 			}
 
-			if (instance.decided) {
+			if (instance.decided && msg.proposalNumber.compareTo(MAX_PROPOSED_SEQ) < 0) {
 				logger.info("Sending DECIDEDACCEPT with decided value to " + sender + " for seq=" + msg.sequence);
 				Object valueToPropose = instance.acceptor.acceptedValue;
 				AcceptMessage accept = new AcceptMessage(
