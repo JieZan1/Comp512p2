@@ -4,7 +4,6 @@ package comp512st.paxos;
 class PaxosInstance {
     final int sequence;
     boolean decided = false;
-    int startTime =
 
     // Acceptor state
     final AcceptorState acceptor;
