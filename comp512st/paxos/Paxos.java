@@ -645,11 +645,24 @@ public class Paxos implements GCDeliverListener {
 						}
 						long currentTime = System.currentTimeMillis();
 						// Check if this instance has timed out
-						boolean isTimedOut = (currentTime - instance.startTime) > 3 * currentTimeout;
+						boolean isTimedOut = (currentTime - instance.startTime) > 30 * currentTimeout;
 
 						if (isTimedOut) {
-							instances.remove(seq);
-						}
+								// Phase 1a
+							int proposalNumber = (int) (System.currentTimeMillis() & 0x7FFFFFFF);
+							ProposedSeq ps = new ProposedSeq(proposalNumber, myProcess);
+
+							// Initialize as proposer
+							instance.initializeAsProposer(ps, pv.value, pv);
+
+							PrepareMessage prepare = new PrepareMessage(seq, ps);
+
+							logger.fine("Sending PREPARE for seq=" + seq + " with proposal=" + ps);
+							gcl.multicastMsg(prepare, this.allOtherProcesses);
+
+							failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
+							}
+
 					}
 				}
 
