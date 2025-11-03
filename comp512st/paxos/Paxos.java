@@ -20,6 +20,8 @@ public class Paxos implements GCDeliverListener {
 
 	final int MAJORITY ;
 
+	static private ProposedSeq MAX_PROPOSED_SEQ = new ProposedSeq(Integer.MAX_VALUE, "decided");
+
 	// Sequence number for total ordering
 	private AtomicInteger currentSequence = new AtomicInteger(1);
 
@@ -211,10 +213,9 @@ public class Paxos implements GCDeliverListener {
 		synchronized (instance) {
 			if (instance.decided) {
 				Object valueToPropose = instance.acceptor.acceptedValue;
-
 				AcceptMessage accept = new AcceptMessage(
 						msg.sequence,
-						msg.proposalNumber,
+						MAX_PROPOSED_SEQ,
 						valueToPropose
 				);
 				gcl.multicastMsg(accept, this.allOtherProcesses);
@@ -276,21 +277,30 @@ public class Paxos implements GCDeliverListener {
 	private void handleAccepted(String sender, AcceptedMessage msg) {
 		PaxosInstance instance = instances.get(msg.sequence);
 
-		if (instance == null || !instance.isProposer()) {
-			return;
-		}
-
 		synchronized (instance) {
+
+			if (instance == null){return;}
+
 			if (instance.decided) {
-				if (msg.proposalNumber.equals(instance.acceptor.acceptedProposal)) {
+				if (msg.proposalNumber.equals(instance.proposer.myProposal)) {
+					ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
 					logger.info("Resending CONFIRM to " + sender + " for seq=" + msg.sequence +
 							" (already decided)");
-					ConfirmMessage confirm = new ConfirmMessage(msg.sequence, msg.proposalNumber);
-					gcl.sendMsg(confirm, sender);
-				} else {
-					logger.fine("Ignoring PROMISE from " + sender + " for seq=" + msg.sequence +
-							" (already decided with different proposal)");
+					gcl.multicastMsg(confirm, allOtherProcesses);
 				}
+				else{
+					Object valueToPropose = instance.acceptor.acceptedValue;
+					AcceptMessage accept = new AcceptMessage(
+							msg.sequence,
+							MAX_PROPOSED_SEQ,
+							valueToPropose
+					);
+					gcl.multicastMsg(accept, this.allOtherProcesses);
+				}
+				return;
+			}
+
+			if (!instance.isProposer()) {
 				return;
 			}
 
@@ -310,7 +320,7 @@ public class Paxos implements GCDeliverListener {
 
 				// Mark pending value as accepted
 				PendingValue pv = instance.proposer.myPendingValue;  // Get from proposer state
-				if (pv != null && pv.value.equals(instance.proposer.proposedValue)) {
+				if (pv != null && pv.value.equals(instance.proposer.proposedValue ) && instance.proposer.highestAcceptedValue == null) {
 					markAccepted(pv);
 				}
 
@@ -357,14 +367,14 @@ public class Paxos implements GCDeliverListener {
 			// Check if we're the proposer and this proposal supersedes ours
 
 			if (instance.decided) {
-				logger.info("Sending PROMISE with decided value to " + sender + " for seq=" + msg.sequence);
-				PromiseMessage promise = new PromiseMessage(
+				logger.info("Sending DECIDEDACCEPT with decided value to " + sender + " for seq=" + msg.sequence);
+				Object valueToPropose = instance.acceptor.acceptedValue;
+				AcceptMessage accept = new AcceptMessage(
 						msg.sequence,
-						msg.proposalNumber,
-						instance.acceptor.acceptedProposal,
-						instance.acceptor.acceptedValue
+						MAX_PROPOSED_SEQ,
+						valueToPropose
 				);
-				gcl.sendMsg(promise, sender);
+				gcl.multicastMsg(accept, this.allOtherProcesses);
 				return;
 			}
 
@@ -413,15 +423,14 @@ public class Paxos implements GCDeliverListener {
 			}
 
 			if (instance.decided) {
-				if (msg.value.equals(instance.acceptor.acceptedValue)) {
-					logger.info("Sending ACCEPTED for already decided value to " + sender +
-							" for seq=" + msg.sequence);
-					AcceptedMessage accepted = new AcceptedMessage(msg.sequence, msg.proposalNumber);
-					gcl.sendMsg(accepted, sender);
-				} else {
-					logger.fine("Ignoring ACCEPT from " + sender + " for seq=" + msg.sequence +
-							" (already decided with different value)");
-				}
+				logger.info("Sending DECIDEDACCEPT with decided value to " + sender + " for seq=" + msg.sequence);
+				Object valueToPropose = instance.acceptor.acceptedValue;
+				AcceptMessage accept = new AcceptMessage(
+						msg.sequence,
+						MAX_PROPOSED_SEQ,
+						valueToPropose
+				);
+				gcl.multicastMsg(accept, this.allOtherProcesses);
 				return;
 			}
 
