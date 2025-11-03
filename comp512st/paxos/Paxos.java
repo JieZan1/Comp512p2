@@ -407,9 +407,9 @@ public class Paxos implements GCDeliverListener {
 
 				failCheck.checkFailure(FailCheck.FailureType.AFTERSENDVOTE);
 			} else {
-//				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, instance.acceptor.promisedProposal);
-//				gcl.sendMsg(reject, sender);
-				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
+				RejectPromiseMessage reject = new RejectPromiseMessage(msg.sequence, instance.acceptor.promisedProposal);
+				gcl.sendMsg(reject, sender);
+				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence + "|| my prop:" + instance.acceptor.promisedProposal + " msg: " + msg.proposalNumber);
 			}
 		}
 	}
@@ -461,9 +461,9 @@ public class Paxos implements GCDeliverListener {
 				gcl.sendMsg(accepted, sender);
 			}
 			else {
-//				RejectAcceptMessage reject = new RejectAcceptMessage(msg.sequence, msg.proposalNumber);
-//				gcl.sendMsg(reject, sender);
-				logger.fine("Rejecting PREPARE from " + sender + " for seq=" + msg.sequence);
+				RejectAcceptMessage reject = new RejectAcceptMessage(msg.sequence, msg.proposalNumber);
+				gcl.sendMsg(reject, sender);
+				logger.fine("Rejecting Accept from " + sender + " for seq=" + msg.sequence + "|| my prop:" + instance.acceptor.promisedProposal + " msg: " + msg.proposalNumber);
 			}
 		}
 	}
@@ -645,7 +645,7 @@ public class Paxos implements GCDeliverListener {
 
 						long currentTime = System.currentTimeMillis();
 						// Check if this instance has timed out
-						boolean isTimedOut = (currentTime - instance.startTime) > 30 * currentTimeout;
+						boolean isTimedOut = (currentTime - instance.startTime) > 3 * currentTimeout;
 
 						if (isTimedOut) {
 								// Phase 1a
@@ -657,7 +657,7 @@ public class Paxos implements GCDeliverListener {
 
 							PrepareMessage prepare = new PrepareMessage(seq, ps);
 
-							logger.fine("Sending PREPARE for seq=" + seq + " with proposal=" + ps);
+							logger.fine("Sending RETRY PREPARE for seq=" + seq + " with proposal=" + ps);
 							gcl.multicastMsg(prepare, this.allOtherProcesses);
 
 							failCheck.checkFailure(FailCheck.FailureType.AFTERSENDPROPOSE);
