@@ -4,6 +4,7 @@ package comp512st.paxos;
 class PaxosInstance {
     final int sequence;
     boolean decided = false;
+    int startTime =
 
     // Acceptor state
     final AcceptorState acceptor;
@@ -20,6 +21,7 @@ class PaxosInstance {
     public void initializeAsProposer(ProposedSeq proposal, Object value, Paxos.PendingValue pv) {
         if (proposer == null) {
             proposer = new ProposerState(proposal, value, pv);
+            acceptor.promisedProposal = proposal;
         }
     }
 

@@ -115,6 +115,7 @@ public class Paxos implements GCDeliverListener {
 		while (true) {
 			LabelObj val = (LabelObj) deliveryQueue.take();
 			if (received_label_obj.contains(val)) {
+				logger.fine("Duplicated obj " + val);
 				continue;
 			}
 			received_label_obj.add(val);
@@ -667,6 +668,4 @@ public class Paxos implements GCDeliverListener {
 			this.proposeTime = System.currentTimeMillis();
 		}
 	}
-
-
 }
