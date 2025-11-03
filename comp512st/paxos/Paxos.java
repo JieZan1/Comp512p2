@@ -637,12 +637,12 @@ public class Paxos implements GCDeliverListener {
 				for (Map.Entry<Integer, PaxosInstance> entry : instanceSnapshot) {
 					int seq = entry.getKey();
 					PaxosInstance instance = entry.getValue();
-
+					if (instance.decided) {
+						continue;
+					}
 					synchronized (instance) {
 						// Skip if already decided
-						if (instance.decided) {
-							continue;
-						}
+
 						long currentTime = System.currentTimeMillis();
 						// Check if this instance has timed out
 						boolean isTimedOut = (currentTime - instance.startTime) > 30 * currentTimeout;
