@@ -34,16 +34,16 @@ public class Paxos implements GCDeliverListener {
 	// Queue for delivering messages to application in order
 	private LinkedBlockingQueue<Object> deliveryQueue = new LinkedBlockingQueue<>();
 
-	// Pending values that haven't been ordered yet
+	// Pending value for the current broadcastTOMeg call
 	private volatile PendingValue currentPendingValue = null;
 
-	// State for each Paxos instance (sequence number)
+	// State for each Paxos instance (sequence number) (THink of it like a log)
 	private ConcurrentHashMap<Integer, PaxosInstance> instances = new ConcurrentHashMap<>();
 
-	// For tracking which values have been delivered
-
+	// Buffer for undelivered values
 	private ConcurrentHashMap<Integer, Object> deliverBuffer = new ConcurrentHashMap<>();
 
+	//Make sure no duplicates
 	private  Set<LabelObj> received_label_obj = Collections.synchronizedSet(new HashSet<>());
 
 	private final Object deliveryLock = new Object();
@@ -65,9 +65,10 @@ public class Paxos implements GCDeliverListener {
 				.filter(p -> !p.equals(myProcess))
 				.toArray(String[]::new);
 
+		//Missing the +1 since proposer itself counts as one
 		this.MAJORITY = (allGroupProcesses.length / 2);
 
-		// Initialize GCL with this as the delivery listener
+		// Turn the logger for gcl down. Used a dummmy logger
 		Logger dummyLogger = Logger.getLogger("dummy");
 		dummyLogger.setLevel(Level.OFF);
 
@@ -138,8 +139,8 @@ public class Paxos implements GCDeliverListener {
 		if (retryThread != null) {
 			retryThread.interrupt();
 		}
-
 		synchronized (currentPendingValue) {
+			//unblock
 			currentPendingValue.notifyAll();
 		}
 
