@@ -97,6 +97,15 @@ public class Paxos implements GCDeliverListener {
 
 		logger.fine("Broadcasting value for sequence " + seq + ": " + val);
 
+		if (this.allGroupProcesses.length == 1){
+			try {
+			deliveryQueue.put(encapsulated_val);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			return;
+		}
+
 		proposeValue(seq, encapsulated_val, pv);
 
 		// Block until this value is accepted by majority
